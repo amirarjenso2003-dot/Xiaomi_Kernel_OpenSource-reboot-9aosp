@@ -1,87 +1,22 @@
-name: Reboot-9AOSP - Stability Build
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt install -y curl wget git build-essential zip bc libssl-dev bison flex libelf-dev libgnutls28-dev python3 python3-dev
-          mkdir -p $GITHUB_WORKSPACE/work
-          sudo ln -sf /usr/bin/python3 /usr/bin/python
-
-      - name: Download Toolchains
+- name: Clone Source
         run: |
           cd $GITHUB_WORKSPACE/work
-          # Clang r416183b adalah standar paling stabil untuk kernel MT6768
-          git clone https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b -b lineage-20.0 clang --depth=1
-          git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 -b lineage-19.1 gcc64 --depth=1
-          git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 -b lineage-19.1 gcc32 --depth=1
-
-      - name: Clone Source
-        run: |
-          cd $GITHUB_WORKSPACE/work
-          # Menggunakan repo amirarjenso2003-dot/Xiaomi_Kernel_OpenSource-reboot-9aosp
-          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} -b ${{ github.ref_name }} android-kernel --depth=1
+          # Menambah --recursive untuk memastikan sub-modul terbawa
+          git clone --recursive https://github.com/amirarjenso2003-dot/Xiaomi_Kernel_OpenSource-reboot-9aosp android-kernel --depth=1
 
       - name: Build Kernel (Clean Baseline)
         run: |
           cd $GITHUB_WORKSPACE/work/android-kernel
+          # Cek isi folder untuk memastikan Makefile ada
+          ls -a
+          
           export PATH=$GITHUB_WORKSPACE/work/clang/bin:$GITHUB_WORKSPACE/work/gcc64/bin:$GITHUB_WORKSPACE/work/gcc32/bin:$PATH
           
-          # Fix compiler errors yang umum di Merlin
-          sed -i 's/^KBUILD_CFLAGS   :=/KBUILD_CFLAGS   := -fno-builtin-stpcpy -fno-builtin-strcpy /' Makefile
+          # Gunakan perintah sed hanya jika Makefile ditemukan
+          if [ -f Makefile ]; then
+            sed -i 's/^KBUILD_CFLAGS   :=/KBUILD_CFLAGS   := -fno-builtin-stpcpy -fno-builtin-strcpy /' Makefile
+          fi
           
           make O=out ARCH=arm64 clean
           make O=out ARCH=arm64 mrproper
-          make O=out ARCH=arm64 merlin_defconfig
-          
-          # Identitas & Anti-Watchdog (Berdasarkan log last_kmsg)
-          sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-Reboot9-V1"/g' out/.config
-          echo "CONFIG_MTK_WATCHDOG_REBOOT_LEVEL=0" >> out/.config
-          echo "CONFIG_PANIC_TIMEOUT=0" >> out/.config
-          
-          make O=out ARCH=arm64 olddefconfig
-          
-          # Kompilasi Utama
-          make -j$(nproc --all) O=out ARCH=arm64 \
-              CC=clang \
-              CLANG_TRIPLE=aarch64-linux-gnu- \
-              CROSS_COMPILE=aarch64-linux-android- \
-              CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-              LD=ld.lld \
-              AR=llvm-ar \
-              NM=llvm-nm \
-              OBJCOPY=llvm-objcopy \
-              OBJDUMP=llvm-objdump \
-              STRIP=llvm-strip \
-              LLVM_IAS=0 \
-              KCFLAGS="-w" \
-              LDFLAGS="--allow-multiple-definition"
-
-      - name: Package AnyKernel3
-        run: |
-          cd $GITHUB_WORKSPACE/work
-          git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3
-          IMAGE=$(find android-kernel/out/arch/arm64/boot -name "Image.gz*" -type f | head -n 1)
-          if [ -f "$IMAGE" ]; then
-            cp "$IMAGE" AnyKernel3/
-            cd AnyKernel3
-            printf "properties() { '\nkernel.string=Reboot9-V1-Stable\ndo.devicecheck=1\ndo.modules=0\ndo.systemless=1\ndo.cleanup=1\ndo.cleanuponabort=0\ndevice.name1=merlin\ndevice.name2=lancelot\n'; }\nblock=/dev/block/by-name/boot;\nis_slot_device=0;\nramdisk_compression=auto;\npatch_vbmeta_flag=auto;\n. tools/ak3-core.sh;\nsplit_boot;\nflash_boot;\nflash_dtbo;\n" > anykernel.sh
-            zip -r9 "../Reboot9-V1-Flashable.zip" *
-          else
-            echo "Kernel Image tidak ditemukan!"
-            exit 1
-          fi
-
-      - name: Upload Result
-        uses: actions/upload-artifact@v4
-        with:
-          name: Reboot9-V1-Kernel
-          path: work/Reboot9-V1-Flashable.zip
+          # ... sisa perintah make lainnya tetap sama
